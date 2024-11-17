@@ -1,0 +1,433 @@
+rm(list=ls())
+#--------------------------------------------------
+suppressWarnings({library(dplyr)})
+suppressWarnings({library(kableExtra)})
+suppressWarnings({library(corrplot)})
+suppressWarnings({library(Matrix)})
+suppressWarnings({library(GGally)})
+suppressWarnings({library(dplyr)})
+suppressWarnings({library(caTools)})
+suppressWarnings({library(randomForest)})
+#suppressWarnings({library(partykit)})
+suppressWarnings({library(rpart)})
+suppressWarnings({library(class)})
+suppressWarnings({library(e1071)})
+suppressWarnings({library(pROC)})
+suppressWarnings({library(factoextra)}) 
+suppressWarnings({library(ggplot2)})
+suppressWarnings({library(gridExtra)})
+#--------------------------------------------------
+n<-3000
+method<-"chisq_test"
+method<-"cor_test"
+method<-"PCA"
+threshold<-8
+#--------------------------------------------------
+data<-read.csv(file="D:/diabetes_binary_health_indicators_BRFSS2015.csv",ý
+                       header=F,sep=",")
+Names<-data[1,]
+data_new<-data[-1,]
+colnames(data_new)<-Names
+data_new<- data_new%>% mutate_if(is.character,as.numeric)
+str(data_new)
+#--------------------------------------------------
+set.seed(12345)
+index=sample(1:dim(data_new)[1],n,replace=FALSE)
+data_new<-data_new[index,]
+#--------------------------------------------------
+sumary_table<-summary(data_new)
+#--------------------------------------------------
+corr_mat<-cor(data_new,method="pearson") 
+ggcorr(data_new,label=TRUE,label_size=2.5,label_round=2,hjust=1,layout.exp=3)
+corr_mat<-round(corr_mat,3)
+corr_mat<-triu(corr_mat)
+cat("\n Correlation Matrix\n")
+corr_mat
+#-------------------------------------------------- ý
+#          Count Plot ý
+#--------------------------------------------------
+data_new1<-data_new%>%mutate(Diabetes_binary= ý
+                dplyr::recode(Diabetes_binary,"0"="No Diabetes","1"="Diabetes"))
+data_pie<-table(data_new1$Diabetes_binary)
+Outcome<-c("No diabetes","Diabetes")
+perc<-round(as.vector(data_pie)/n,3)*100
+data_pie_n<-data.frame(Outcome=c("No diabetes","Diabetes"),ý
+                                   value=as.vector(data_pie),perc=perc)
+My_Theme<-theme(
+  axis.title.x = element_text(size = 12),
+  axis.text.x = element_text(size = 16),
+  axis.title.y = element_text(size = 12))
+pie_plot<-ggplot(data_pie_n,aes(x="",y=value,fill=Outcome))+
+geom_col(color="black")+geom_text(aes(label=paste(perc,"%")),
+           position=position_stack(vjust=0.5),show.legend=FALSE,size = 7)+
+ coord_polar(theta="y")+theme_void()+
+ scale_fill_discrete(labels=c("Diabetes","No diabetes"))+
+ scale_fill_manual(name="Presence of diabetes", 
+                    labels=c("Diabetes","No diabetes"),
+                    values=c("darkred","darkgreen"))+
+    theme(legend.text=element_text(size=16),legend.title=element_text(size=14))
+
+bar_plot<-ggplot(data_pie_n,aes(x=Outcome,y=value))+ý
+          geom_col(fill=c("darkgreen","darkred"))+
+  geom_text(aes(label=value),vjust=1.6,color="black",size = 8)+My_Theme
+grid.arrange(pie_plot,bar_plot,ncol=2)
+
+#-------------------------------------------------------------------------------
+#                 Feature Selection
+#-------------------------------------------------------------------------------
+Feature_Selection_chisq<-matrix(0,21,2)
+Feature_Selection_cor<-matrix(0,21,3)
+for(i in 1:21){
+  Feature_Selection_chisq[i,1]<-chisq.test(table(data_new[,i+1],data_new[,1]),ý
+             simulate.p.value=TRUE,B=10000)$statistic
+  Feature_Selection_chisq[i,2]<-chisq.test(table(data_new[,i+1],data_new[,1]),ý
+  simulate.p.value=TRUE,B=10000)$p.value
+  Feature_Selection_cor[i,1]<-round(cor(data_new[,i+1],data_new[,1],ý
+                          method="pearson"),3)
+  Feature_Selection_cor[i,2]<-abs(cor.test(data_new[,i+1],data_new[,1],ý
+                         method=c("pearson"))$statistic)
+  Feature_Selection_cor[i,3]<-cor.test(data_new[,i+1],data_new[,1],ý
+                        method=c("pearson"))$p.value
+}
+namess<-c("HighBP","HighChol","CholCheck","BMI","Smoker","Stroke",ý
+              "HeartDiseaseorAttack","PhysActivity","Fruits","Veggies",ý
+               "HvyAlcoholConsump","AnyHealthcare","NoDocbcCost",
+          "GenHlth","MentHlth","PhysHlth","DiffWalk","Sex","Age",ý
+           "Education","Income")
+Feature_Selection_chisq<-data.frame(namess,round(Feature_Selection_chisq,5))
+Feature_Selection_cor<-data.frame(namess,round(Feature_Selection_cor,5))
+colnames(Feature_Selection_chisq)<-c("variables","chisq_stat","chisq_p_value")
+colnames(Feature_Selection_cor)<-c("variables","correlation",ý
+                    "cor_stat","cor_p_value")
+Feature_Selection_chisq<-Feature_Selection_chisq[ý
+           order(Feature_Selection_chisq$chisq_stat,decreasing = T),]
+Feature_Selection_cor<-Feature_Selection_cor[ý
+          order(Feature_Selection_cor$cor_stat,decreasing = T),]
+#-------------------------------------------------------------------------------
+PCA<-prcomp(data_new[,-1]) 
+summary(PCA)
+fviz_eig(PCA,col.var="blue",addlabel =TRUE)
+Feature_Selection_pca<-round(get_eigenvalue(PCA),3)
+Feature_Selection_pca<-data.frame(Feature_Selection_pca) 
+colnames(Feature_Selection_pca)<-c("eigenvalue",
+                "variance.percent","cumulative.variance.percent")
+var<-get_pca_var(PCA)
+a<-fviz_contrib(PCA, "var", axes=1)
+b<-fviz_contrib(PCA, "var", axes=2)
+grid.arrange(a,b,top="Contribution to the first five Principal Components",ý
+                    nrow=1)
+c<-fviz_contrib(PCA, "var", axes=3)
+d<-fviz_contrib(PCA, "var", axes=4)
+grid.arrange(c,d,top="",nrow=1)
+e<-fviz_contrib(PCA, "var", axes=5)
+e
+#--------------------------------------------------
+if(method=="chisq_test"){
+names_select<-Feature_Selection_chisq$variables[1:threshold]
+data_new_new<-data_new%>%select(Diabetes_binary,names_select)
+}
+if(method=="cor_test"){
+names_select<-Feature_Selection_cor$variables[1:threshold]
+data_new_new<-data_new%>%select(Diabetes_binary,names_select)
+}
+if(method=="PCA"){
+threshold_pca<-length(which(Feature_Selection_pca$eigenvalue>1))
+names_select<-c("PhysHlth","MentHlth","BMI","Age","Income")
+data_new_new<-data_new%>%select(Diabetes_binary,names_select)
+}
+str(data_new_new)
+#--------------------------------------------------
+set.seed(1398)
+Id<-1:dim(data_new_new)[1]
+split<-sample.split(Id,SplitRatio=0.8) 
+data_new_new2<-data.frame(data_new_new,split)
+data_train1<-data_new_new2%>%dplyr::filter(data_new_new2$split=="TRUE")
+data_test1<-data_new_new2%>%dplyr::filter(data_new_new2$split=="FALSE")
+data_train<-data_train1%>%dplyr::select(-(split))
+data_test<-data_test1%>%dplyr::select(-(split))
+#---------------------------------------------------------------------
+#                Logistic Regression(LR)
+#---------------------------------------------------------------------
+logit_model<-glm(Diabetes_binary~.,data=data_train,family=binomial(logit))
+probs_pred_test_LR<-predict(logit_model,data_test[,-1],type="response")
+pred_test_LR<-rep(0,length(probs_pred_test_LR))
+pred_test_LR[probs_pred_test_LR>0.5] <- 1
+Table_test_LR<-table(pred_test_LR,data_test$Diabetes_binary,
+                     dnn=c("Predicted Status","Observed Status"))
+prop.table(Table_test_LR)
+#---------------------------------------------------------------------
+#                 Random Forest(RF)
+#---------------------------------------------------------------------
+Random_Forest<-randomForest(x=data_train[,-1],ý
+            y=as.factor(data_train$Diabetes_binary),ntree=1000) 
+pred_test_RF<-predict(Random_Forest,newdata=data_test[,-1]) 
+pred_test_RF<-ifelse(pred_test_RF=="0",0,1)
+Table_test_RF<-table(pred_test_RF,data_test$Diabetes_binary,
+                     dnn=c("Predicted Status","Observed Status"))
+if(nrow(Table_test_RF)==1){
+Table_test_RF<-rbind(Table_test_RF,c(0,0))
+rownames(Table_test_RF)<-c("0","1")
+}
+prop.table(Table_test_RF)
+#---------------------------------------------------------------------
+#                  Decision Tree(DT)
+#---------------------------------------------------------------------
+Decision_Tree<-rpart(Diabetes_binary~.,data_train,method="class",
+              control = rpart.control(cp = 0.05))
+pred_test_DT<-predict(Decision_Tree,data_test[,-1],type="class") 
+pred_test_DT<-ifelse(pred_test_DT=="0",0,1)
+Table_test_DT<-table(pred_test_DT,data_test$Diabetes_binary,
+                     dnn=c("Predicted Status","Observed Status"))
+if(nrow(Table_test_DT)==1){
+Table_test_DT<-rbind(Table_test_DT,c(0,0))
+rownames(Table_test_DT)<-c("0","1")
+}
+prop.table(Table_test_DT)
+#---------------------------------------------------------------------
+#                  K Neighbors(KNN)
+#---------------------------------------------------------------------
+K_Neighbors<-knn(train=data_train[,-1],test=data_test[,-1], 
+                 cl=data_train$Diabetes_binary,k=6) 
+pred_test_KNN<-K_Neighbors 
+pred_test_KNN<-ifelse(pred_test_KNN=="0",0,1)
+Table_test_KNN<-table(pred_test_KNN,data_test$Diabetes_binary,
+                     dnn=c("Predicted Status","Observed Status"))
+if(nrow(Table_test_KNN)==1){
+Table_test_KNN<-rbind(Table_test_KNN,c(0,0))
+rownames(Table_test_KNN)<-c("0","1")
+}
+prop.table(Table_test_KNN)
+
+#---------------------------------------------------------------------
+#                   Support Vector Machines(SVM)
+#---------------------------------------------------------------------
+Support_Vector_Machines<-svm(formula=Diabetes_binary~.,data_train,
+                             kernel = "linear")
+pred_test_SVM<-predict(Support_Vector_Machines,data_test,probability = TRUE) 
+pred_test_SVM<-ifelse(pred_test_SVM=="FALSE",0,1)
+Table_test_SVM<-table(pred_test_SVM,data_test$Diabetes_binary,
+                     dnn=c("Predicted Status","Observed Status"))
+if(nrow(Table_test_SVM)==1){
+Table_test_SVM<-rbind(Table_test_SVM,c(0,0))
+rownames(Table_test_SVM)<-c("0","1")
+}
+
+prop.table(Table_test_SVM)
+#---------------------------------------------------------------------
+#                   ROC
+#---------------------------------------------------------------------
+ROC_LR<-roc(data_test$Diabetes_binary,pred_test_LR,plot=F,ýprint.auc=TRUE)
+AUC_LR<-as.numeric(ROC_LR$auc)
+#--------------------------
+ROC_RF<-roc(data_test$Diabetes_binary,pred_test_RF,plot=F,ýprint.auc=TRUE)
+AUC_RF<-as.numeric(ROC_RF$auc)
+#--------------------------
+ROC_DT<-roc(data_test$Diabetes_binary,pred_test_DT,plot=F,ýprint.auc=TRUE)
+AUC_DT<-as.numeric(ROC_DT$auc)
+#--------------------------
+ROC_KNN<-roc(data_test$Diabetes_binary,pred_test_KNN,plot=F,print.auc=TRUE)
+AUC_KNN<-as.numeric(ROC_KNN$auc)
+#--------------------------
+ROC_SVM<-roc(data_test$Diabetes_binary,pred_test_SVM,plot=F,print.auc=TRUE,)
+AUC_SVM<-as.numeric(ROC_SVM$auc)
+#---------------------------------------------------------------------
+#                   Model Performance Comparison
+#---------------------------------------------------------------------
+Model_Performance<-function(res){
+TN<-res[2,2]
+TP<-res[1,1]
+FP<-res[2,1]
+FN<-res[1,2]
+Accuracy<-(TP+TN)/(TP+TN+FP+FN) 
+Precision<-TP/(TP+FP)
+Recall<-TP/(TP+FN)
+F1_Score<-2*((Precision*Recall)/(Precision+Recall)) 
+result<-c(Accuracy,Precision,Recall,F1_Score)
+result
+}
+
+Performance_LR<-Model_Performance(Table_test_LR)
+Performance_RF<-Model_Performance(Table_test_RF)
+Performance_DT<-Model_Performance(Table_test_DT)
+Performance_KNN<-Model_Performance(Table_test_KNN)
+Performance_SVM<-Model_Performance(Table_test_SVM)
+
+Table_Result<-rbind(Performance_LR,Performance_DT,Performance_RF,
+                         Performance_KNN,Performance_SVM)
+Table_Result<-cbind(Table_Result,c(AUC_LR,AUC_DT,AUC_RF,AUC_KNN,AUC_SVM))
+Table_Result<-round(Table_Result,4)
+rownames(Table_Result)<-c("LR","DT","RF","KNN","SVM")
+colnames(Table_Result)<-c("Accuracy","Precision","Recall","F1-Score","AUC")
+Table_Result
+#------------------------------------------------------------------
+#                                bar plot
+#------------------------------------------------------------------
+ML_CLISIF1<-c("LR","DT","RF","KNN","SVM")
+CLISIF_value1<-Table_Result[,1]
+LR1<-data.frame(ML_CLISIF1=ML_CLISIF1,CLISIF_value1=CLISIF_value1)
+bar1<-ggplot(LR1,aes(x=ML_CLISIF1,y=CLISIF_value1,fill=ML_CLISIF1))+
+  geom_bar(stat = "identity", width=0.8)+ 
+  geom_text(aes(label=CLISIF_value1), vjust=1.7,size=5)+
+  scale_fill_manual(values = c("red","blue","gray","darkgreen","brown"))+ý
+  theme(legend.position="none")+
+  xlab("Machine Learning Classification Models")+ylab("Value")+ 
+  ggtitle("Accuracy criterion") +
+   theme(axis.text.x=element_text(size=12),
+      axis.text.y=element_text(size=12),
+      axis.title.x=element_text(size=12),
+      axis.title.y=element_text(size=12),
+     plot.title = element_text(size=13,face="bold"))
+#---------------------------------------------------------------
+ML_CLISIF2<-c("LR","DT","RF","KNN","SVM")
+CLISIF_value2<-Table_Result[,2]
+LR2<-data.frame(ML_CLISIF2=ML_CLISIF2,CLISIF_value2=CLISIF_value2)
+bar2<-ggplot(LR2,aes(x=ML_CLISIF2,y=CLISIF_value2,fill=ML_CLISIF2))+
+  geom_bar(stat = "identity", width=0.8)+ 
+  geom_text(aes(label=CLISIF_value2), vjust=1.7,size=5)+
+  scale_fill_manual(values = c("red","blue","gray","darkgreen","brown"))+ý
+  theme(legend.position="none")+
+  xlab("Machine Learning Classification Models")+ylab("Value")+ 
+  ggtitle("Precision criterion") +
+   theme(axis.text.x=element_text(size=12),
+      axis.text.y=element_text(size=12),
+      axis.title.x=element_text(size=12),
+      axis.title.y=element_text(size=12),
+     plot.title = element_text(size=13,face="bold"))
+
+grid.arrange(bar1,bar2,ncol=2)
+#------------------------------------------------------
+ML_CLISIF1<-c("LR","DT","RF","KNN","SVM")
+CLISIF_value1<-Table_Result[,3]
+LR1<-data.frame(ML_CLISIF1=ML_CLISIF1,CLISIF_value1=CLISIF_value1)
+bar1<-ggplot(LR1,aes(x=ML_CLISIF1,y=CLISIF_value1,fill=ML_CLISIF1))+
+  geom_bar(stat = "identity", width=0.8)+ 
+  geom_text(aes(label=CLISIF_value1), vjust=1.7,size=5)+
+  scale_fill_manual(values = c("red","blue","gray","darkgreen","brown"))+ý
+  theme(legend.position="none")+
+  xlab("Machine Learning Classification Models")+ylab("Value")+ 
+  ggtitle("Recall criterion") +
+   theme(axis.text.x=element_text(size=12),
+      axis.text.y=element_text(size=12),
+      axis.title.x=element_text(size=12),
+      axis.title.y=element_text(size=12),
+     plot.title = element_text(size=13,face="bold"))
+#---------------------------------------------------------------
+ML_CLISIF2<-c("LR","DT","RF","KNN","SVM")
+CLISIF_value2<-Table_Result[,4]
+LR2<-data.frame(ML_CLISIF2=ML_CLISIF2,CLISIF_value2=CLISIF_value2)
+bar2<-ggplot(LR2,aes(x=ML_CLISIF2,y=CLISIF_value2,fill=ML_CLISIF2))+
+  geom_bar(stat = "identity", width=0.8)+ 
+  geom_text(aes(label=CLISIF_value2), vjust=1.7,size=5)+
+  scale_fill_manual(values = c("red","blue","gray","darkgreen","brown"))+ý
+  theme(legend.position="none")+
+  xlab("Machine Learning Classification Models")+ylab("Value")+ 
+  ggtitle("F1-Score criterion") +
+   theme(axis.text.x=element_text(size=12),
+      axis.text.y=element_text(size=12),
+      axis.title.x=element_text(size=12),
+      axis.title.y=element_text(size=12),
+     plot.title = element_text(size=13,face="bold"))
+
+grid.arrange(bar1,bar2,ncol=2)
+#---------------------------------------------------------------
+ML_CLISIF2<-c("LR","DT","RF","KNN","SVM")
+CLISIF_value2<-Table_Result[,5]
+LR2<-data.frame(ML_CLISIF2=ML_CLISIF2,CLISIF_value2=CLISIF_value2)
+bar2<-ggplot(LR2,aes(x=ML_CLISIF2,y=CLISIF_value2,fill=ML_CLISIF2))+
+  geom_bar(stat = "identity", width=0.8)+ 
+  geom_text(aes(label=CLISIF_value2), vjust=1.7,size=5)+
+  scale_fill_manual(values = c("red","blue","gray","darkgreen","brown"))+ý
+  theme(legend.position="none")+
+  xlab("Machine Learning Classification Models")+ylab("Value")+ 
+  ggtitle("AUC criterion") +
+   theme(axis.text.x=element_text(size=12),
+      axis.text.y=element_text(size=12),
+      axis.title.x=element_text(size=12),
+      axis.title.y=element_text(size=12),
+     plot.title = element_text(size=13,face="bold"))
+#------------------------------------------------------------------
+#                      Confusion matrix plot
+#------------------------------------------------------------------
+Predicted.Status<-factor(c("No Diabetes(0)","Diabetes(1)",ý
+                       "No Diabetes(0)","Diabetes(1)"))
+Observed.Status<-factor(c("No Diabetes(0)",ý
+                       "No Diabetes(0)","Diabetes(1)","Diabetes(1)"))
+
+Freq<-c(Table_test_LR[1,1],Table_test_LR[2,1],
+        Table_test_LR[1,2],Table_test_LR[2,2])
+LR1<-data.frame(Predicted.Status,Observed.Status,Freq)
+
+
+p1=ggplot(data=LR1,mapping=aes(x=Predicted.Status,y=Observed.Status)) +
+  geom_tile(aes(fill=Freq),colour="white") +
+  geom_text(aes(label=sprintf("%1.0f",Freq)),vjust=1,size=5) +
+  scale_fill_gradient(low="lightblue",high="blue")+ 
+  ggtitle("Logistic Regression (LR) Model") +
+   theme(axis.text.x=element_text(size=12),
+      axis.text.y=element_text(size=12),
+      axis.title.x=element_text(size=12),
+      axis.title.y=element_text(size=12),
+     plot.title = element_text(size=10,face="bold"))
+
+Freq<-c(Table_test_DT[1,1],Table_test_DT[2,1],
+        Table_test_DT[1,2],Table_test_DT[2,2])
+LR2<-data.frame(Predicted.Status,Observed.Status,Freq)
+
+p2=ggplot(data=LR2,mapping=aes(x=Predicted.Status,y=Observed.Status)) +
+  geom_tile(aes(fill=Freq),colour="white") +
+  geom_text(aes(label=sprintf("%1.0f",Freq)),vjust=1,size=5) +
+  scale_fill_gradient(low="lightblue",high="blue")+ 
+  ggtitle("Decision Tree (DT) Model") +
+   theme(axis.text.x=element_text(size=12),
+      axis.text.y=element_text(size=12),
+      axis.title.x=element_text(size=12),
+      axis.title.y=element_text(size=12),
+     plot.title = element_text(size=10,face="bold"))
+
+grid.arrange(p1,p2,nrow=1)
+#------------------------------------------------------
+Freq<-c(Table_test_RF[1,1],Table_test_RF[2,1],
+        Table_test_RF[1,2],Table_test_RF[2,2])
+LR3<-data.frame(Predicted.Status,Observed.Status,Freq)
+
+p3=ggplot(data=LR3,mapping=aes(x=Predicted.Status,y=Observed.Status)) +
+  geom_tile(aes(fill=Freq),colour="white") +
+  geom_text(aes(label=sprintf("%1.0f",Freq)),vjust=1,size=5) +
+  scale_fill_gradient(low="lightblue",high="blue")+ 
+  ggtitle("Random Forest (RF) Model") +
+   theme(axis.text.x=element_text(size=12),
+      axis.text.y=element_text(size=12),
+      axis.title.x=element_text(size=12),
+      axis.title.y=element_text(size=12),
+     plot.title = element_text(size=10,face="bold"))
+
+Freq<-c(Table_test_KNN[1,1],Table_test_KNN[2,1],
+        Table_test_KNN[1,2],Table_test_KNN[2,2])
+LR4<-data.frame(Predicted.Status,Observed.Status,Freq)
+
+p4=ggplot(data=LR4,mapping=aes(x=Predicted.Status,y=Observed.Status)) +
+  geom_tile(aes(fill=Freq),colour="white") +
+  geom_text(aes(label=sprintf("%1.0f",Freq)),vjust=1,size=5) +
+  scale_fill_gradient(low="lightblue",high="blue")+ 
+  ggtitle("K-Nearest Neighbor (KNN) Model") +
+   theme(axis.text.x=element_text(size=12),
+      axis.text.y=element_text(size=12),
+      axis.title.x=element_text(size=12),
+      axis.title.y=element_text(size=12),
+     plot.title = element_text(size=10,face="bold"))
+
+grid.arrange(p3,p4,nrow=1)
+#------------------------------------------------------
+Freq<-c(Table_test_SVM[1,1],Table_test_SVM[2,1],
+        Table_test_SVM[1,2],Table_test_SVM[2,2])
+LR5<-data.frame(Predicted.Status,Observed.Status,Freq)
+p5=ggplot(data=LR5,mapping=aes(x=Predicted.Status,y=Observed.Status)) +
+  geom_tile(aes(fill=Freq),colour="white") +
+  geom_text(aes(label=sprintf("%1.0f",Freq)),vjust=1,size=5) +
+  scale_fill_gradient(low="lightblue",high="blue")+ 
+  ggtitle("Support Vector Machines (SVM) Model") +
+   theme(axis.text.x=element_text(size=12),
+      axis.text.y=element_text(size=12),
+      axis.title.x=element_text(size=12),
+      axis.title.y=element_text(size=12),
+     plot.title = element_text(size=10,face="bold"))

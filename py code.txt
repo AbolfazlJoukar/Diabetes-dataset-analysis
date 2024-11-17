@@ -1,0 +1,165 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.svm import SVC
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from scipy.stats import pearsonr
+from sklearn import metrics
+from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.model_selection import train_test_split
+from mlxtend.plotting import plot_confusion_matrix
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.feature_selection import SelectKBest
+from sklearn.feature_selection import chi2
+from imblearn.under_sampling import NearMiss
+from sklearn.preprocessing import StandardScaler
+from tqdm import tqdm
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+#-----------------------------------------------------------------
+#data and convert numbers of G3 to 0 and 1
+#------------------------------------------------------------------
+df = pd.read_csv("D:/diabetes_binary_health_indicators_BRFSS2015.csv")
+print(df)
+print(df.info())
+print(df.describe())
+#----------------------------------------------------------------
+#          CORR PLOT
+#------------------------------------------------------------------
+plt.figure(figsize = (20,10))
+sns.heatmap(df.corr(),annot=True , cmap ='YlOrRd' )
+plt.title("correlation of feature")
+plt.show()
+#------------------------------------------------------------------
+df.hist(figsize=(40,30))
+plt.show()
+#-----------------------------------------------------------------
+#               pie plot variables
+#-----------------------------------------------------------------
+labels = "No diabetes","Diabetes"
+df.Diabetes_binary.value_counts().plot.pie(labels=labels, autopct='%1.1f%%',shadow=True, startangle=90)
+plt.show()
+#-----------------------------------------------------------------
+df_features = df.drop("Diabetes_binary",axis=1)
+df_target = df["Diabetes_binary"]
+print(df_target.value_counts())
+#-----------------------------------------------------------------
+#                  Mutual Information
+#-----------------------------------------------------------------
+threshold = 10
+high_score_features_mic = []
+feature_scores = mutual_info_classif(df_features, df_target, random_state=0)
+for score, f_name in sorted(zip(feature_scores, df_features.columns), reverse=True)[:threshold]:
+        high_score_features_mic.append(f_name)
+print(high_score_features_mic)
+#print(feature_scores)
+#-----------------------------------------------------------------
+#                  Chi-Squared
+#-----------------------------------------------------------------
+skb = SelectKBest(score_func=chi2, k=threshold)
+sel_skb = skb.fit(df_features, df_target)
+sel_skb_index = sel_skb.get_support()
+df_norm_skb = df_features.iloc[:, sel_skb_index]
+high_score_features_skb = list(df_norm_skb.columns)
+print(high_score_features_skb)
+#-----------------------------------------------------------------
+#                  Pearson Correlation
+#-----------------------------------------------------------------
+pearson_list = []
+for l in list(df_features.columns):
+    p,_ = pearsonr(df_features[l], df_target)
+    pearson_list.append(abs(p))
+
+p_value=pd.Series(pearson_list,index=df_features.columns)
+p_value.sort_values(ascending=False,inplace=True)
+high_score_features_pearson = list(p_value.index[:threshold])
+print(high_score_features_pearson)
+#-----------------------------------------------------------------
+#                  Best of all
+#-----------------------------------------------------------------
+high_score_features = []
+for h in  high_score_features_mic:
+    if h in high_score_features_skb and h in high_score_features_pearson:
+        high_score_features.append(h)
+print(high_score_features)
+#-----------------------------------------------------------------
+y = df_target
+
+features_list = [
+    ["all",df_features],
+    ["mic 10", df_features[high_score_features_mic]],
+    ["skb 10", df_features[high_score_features_skb]],
+    ["pearson 10", df_features[high_score_features_pearson]],
+    ["best 4", df_features[high_score_features]]
+]
+#print(features_list)
+#------------------------------------------------------
+scalar = StandardScaler()
+data = []
+
+for name, X in features_list:
+    data.append([name, scalar.fit_transform(X)])
+
+#print(data)
+#-----------------------------------------------------
+splited_data = []
+for name, X in data:
+    X_train , X_test , y_train , y_test = train_test_split(X, y, test_size=0.3)
+    splited_data.append({
+            'name': name ,'X_train': X_train,
+            'X_test':X_test,'y_train':y_train,
+            'y_test':y_test
+        })
+#-----------------------------------------------------
+evaluations = pd.DataFrame()
+data = splited_data[0]
+pred_list = []
+for data in tqdm(splited_data):
+    fs = data["name"]
+    models =[
+        ['LR', LogisticRegression(), data],
+        ['RF', RandomForestClassifier(max_depth=5,n_estimators=1000, class_weight='balanced'), data],
+        ['DT', DecisionTreeClassifier(max_depth=5), data],
+        ['KNN', KNeighborsClassifier(n_neighbors= 6), data],
+        ['SVM', SVC(probability=True), data]
+    ]
+    roc_list = []
+    accuracy_list = []
+    f1_list = []
+    recall_list = []
+    precision_list = []
+
+    for name ,model, data in tqdm(models):
+        X_train, X_test, y_train, y_test= data['X_train'], data['X_test'], data['y_train'], data['y_test']
+        model.fit(X_train, y_train)
+        y_pred = model.predict_proba(X_test)[:,1]
+
+        pred_list.append({
+            "model": name,
+            "fs": fs,
+            "data": y_pred
+        })
+        roc_list.append(metrics.roc_auc_score(y_test,y_pred))
+
+        y_pred = [0 if (y<0.5)else 1 for y in y_pred]
+
+        accuracy_list.append(metrics.accuracy_score(y_test,y_pred))
+        f1_list.append(metrics.f1_score(y_test,y_pred))
+        recall_list.append(metrics.recall_score(y_test,y_pred))
+        precision_list.append(metrics.precision_score(y_test,y_pred))
+
+    names = [name for name ,_ ,_ in models]
+    fsm = [data['name'] for _ ,_ ,data in models]
+    evaluation = pd.DataFrame({'classifiers': names,'Feature selection method': fsm ,'AUC Score': roc_list, 'Accuracy':accuracy_list,'Precision':precision_list,'Recall':recall_list, 'F-measure':f1_list})
+
+    evaluations = pd.concat([evaluations, evaluation], ignore_index=True)
+
+    evaluation = evaluation.sort_values(by='AUC Score', ascending=False)
+    print(evaluation)
